@@ -8,12 +8,26 @@ import {
   GetItemCommand
 } from "@aws-sdk/client-dynamodb";
 import { unmarshall } from "@aws-sdk/util-dynamodb";
+import { v4 as uuidv4 } from "uuid";
 const dynamo = new DynamoDBClient({ region: process.env.REGION });
 
 const s3 = new S3Client({ region: process.env.REGION });
 const sqsClient = new SQSClient({
   region: process.env.REGION,
 });
+
+/**
+ * Per-request context — set once at the top of each handler
+ */
+let _reqCtx = {};
+export const setRequestContext = (event, context) => {
+  _reqCtx = {
+    path: event?.path || event?.resource || "",
+    method: event?.httpMethod || "",
+    userId: event?.headers?.user_id || event?.requestContext?.authorizer?.sub || "unknown",
+    requestId: context?.awsRequestId || "",
+  };
+};
 
 const CACHE_TTL_DEFAULT = Number(process.env.CACHE_TTL_DEFAULT || 10000); // seconds
 const CACHE_TTL_MIN = 30;
@@ -23,7 +37,6 @@ const CACHE_TTL_MAX = 300;
  * Retrieves a sessionId from AlRais authentication API.
  * Includes improved validation, logging, and error handling for production safety.
  */
-//  */
 export const getSessionId = async (userId, searchKey = null) => {
   const loginUrl = `${process.env.BASE_URL}/auth/login`;
 
@@ -112,57 +125,94 @@ export const getSessionId = async (userId, searchKey = null) => {
   }
 };
 
+/**
+ * Create response object — auto-logs non-2xx to centralized error-log service
+ */
+export const createResponse = (statusCode, body, headers = {}) => {
+  // Fire-and-forget: log any 5xx response via SQS
+  if (statusCode >= 500) {
+    const queueUrl = process.env.ERROR_LOG_QUEUE_URL;
+    if (queueUrl) {
+      sqsClient.send(new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: JSON.stringify({
+          service: "flight-ancillaries",
+          statusCode,
+          errorTitle: "Internal Server Error",
+          errorMessage: body?.message || body?.error || "",
+          path: _reqCtx.path || "",
+          method: _reqCtx.method || "",
+          userId: _reqCtx.userId || "unknown",
+          requestId: _reqCtx.requestId || "",
+          stackTrace: body?.stack || "",
+          environment: process.env.STAGE || "dev",
+          metadata: {
+            responseBody: body,
+          },
+        }),
+      })).catch(() => { /* silent */ });
+    }
+  }
+
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Credentials': true,
+      ...headers
+    },
+    body: JSON.stringify(body)
+  };
+}
+
+/**
+ * Log error with context — console only (createResponse handles pushing to error-log service)
+ */
+export const logError = async (error, context) => {
+  const errorLog = {
+    type: 'error',
+    error: {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    },
+    context,
+    timestamp: new Date().toISOString()
+  };
+
+  console.error("Error occurred:", errorLog);
+}
+
 export const InternalError = async (error) => {
   if (error.response) {
-    console.error("🔴 Provesio API responded with error:");
+    console.error("Provesio API responded with error:");
     console.error("Status:", error.response.status);
     console.error("Headers:", JSON.stringify(error.response.headers, null, 2));
     console.error("Data:", JSON.stringify(error.response.data, null, 2));
 
-    return {
-      statusCode: error.response.status,
-      headers: {
-        "Access-Control-Allow-Origin": "*", // ← allow all origins
-        "Access-Control-Allow-Credentials": true, // ← allow cookies if needed
-      },
-      body: JSON.stringify({
-        message: "Provesio API Error",
-        status: error.response.status,
-        response: error.response.data,
-      }),
-    };
+    return createResponse(error.response.status, {
+      message: "Provesio API Error",
+      status: error.response.status,
+      response: error.response.data,
+    });
   }
 
-  // 🔸 Request was sent but no response received
+  // Request was sent but no response received
   if (error.request) {
-    console.error("🟠 No response received from Provesio API");
+    console.error("No response received from Provesio API");
     console.error("Request:", error.request);
 
-    return {
-      statusCode: 504,
-      headers: {
-        "Access-Control-Allow-Origin": "*", // ← allow all origins
-        "Access-Control-Allow-Credentials": true, // ← allow cookies if needed
-      },
-      body: JSON.stringify({
-        message: "No response received from Provesio API",
-      }),
-    };
+    return createResponse(504, {
+      message: "No response received from Provesio API",
+    });
   }
 
-  console.error("⚠️ Unexpected internal error:", error.message);
-  return {
-    statusCode: 500,
-    headers: {
-      "Access-Control-Allow-Origin": "*", // ← allow all origins
-      "Access-Control-Allow-Credentials": true, // ← allow cookies if needed
-    },
-    body: JSON.stringify({
-      message: "Internal server error",
-      error: error.message,
-    }),
-  };
-
+  console.error("Unexpected internal error:", error.message);
+  return createResponse(500, {
+    message: "Internal server error",
+    error: error.message,
+  });
 }
 
 export const globalHeaders = () => {
