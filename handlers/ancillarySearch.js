@@ -36,7 +36,9 @@ export const handler = async (event) => {
                 body: JSON.stringify({ message: "Login failed, no conversationId returned." }),
             };
         }
-
+        console.log("conversationId************",conversationId)
+        console.log("sessionId***************",sessionId);
+        
         // --- Caching ---
         const cacheKey = createCacheKey(body, "ancillarySearch");
         try {
@@ -47,7 +49,7 @@ export const handler = async (event) => {
             }
             console.info("Cache MISS for", cacheKey);
         } catch (redisErr) {
-            console.error("Redis GET error (proceeding to API):", redisErr);
+            console.error("Redis GET error (proceeding to API):****************", redisErr);
         }
 
         // --- Call Provesio Ancillary Search ---

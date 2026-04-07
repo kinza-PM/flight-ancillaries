@@ -1,0 +1,157 @@
+service: flight-ancillaries
+frameworkVersion: "3"
+
+custom:
+  serverlessSsmFetch:
+    USERNAME: /provesio/username~true
+    PASSWORD: /provesio/password~true
+    COMPANY_CODE: /provesio/companycode~true
+    X_API_KEY: /provesio/xapikey~true
+    BASE_URL: /provesio/baseurl~true
+    COGNITO_CLIENT_ID: /provesio/cognitouserid~true
+    GUEST_JWT_SECRET: /provesio/jwtguestsecret~true
+    COGNITO_USERPOOL_ID: /provesio/cognitouserpoolid~true
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: eu-west-1
+  stage: ${opt:stage, 'qa'}
+
+  vpc:
+    securityGroupIds:
+      - !Ref LambdaSecurityGroup
+    subnetIds:
+      - subnet-07b9ebefc03119511
+      - subnet-04857ca7c56819035
+
+  iam:
+    role:
+      statements:
+      
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:PutObjectAcl
+            - s3:PutObjectTagging       # ← REQUIRED
+          Resource:
+            - arn:aws:s3:::log-trace-qa/*
+
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+          Resource: arn:aws:sqs:eu-west-1:${aws:accountId}:add-log-queue-${self:provider.stage}     
+
+  environment:
+    STAGE: ${self:provider.stage}
+    USERNAME: ${self:custom.serverlessSsmFetch.USERNAME}
+    PASSWORD: ${self:custom.serverlessSsmFetch.PASSWORD}
+    COMPANY_CODE: ${self:custom.serverlessSsmFetch.COMPANY_CODE}
+    X_API_KEY: ${self:custom.serverlessSsmFetch.X_API_KEY}
+    BASE_URL: ${self:custom.serverlessSsmFetch.BASE_URL}
+    REDIS_HOST: redis-rg-qa.ygymth.ng.0001.euw1.cache.amazonaws.com
+    REDIS_PORT: 6379
+    COGNITO_CLIENT_ID: ${self:custom.serverlessSsmFetch.COGNITO_CLIENT_ID}
+    GUEST_JWT_SECRET: ${self:custom.serverlessSsmFetch.GUEST_JWT_SECRET}
+    GUEST_TOKEN_TTL: "3600"
+    COGNITO_USERPOOL_ID: ${self:custom.serverlessSsmFetch.COGNITO_USERPOOL_ID}
+    COGNITO_REGION: "eu-west-1"
+    LOG_TRACE_SQS: https://sqs.eu-west-1.amazonaws.com/648485682397/add-log-queue-${self:provider.stage}
+    LOG_TRACE_BUCKET: log-trace-qa
+    REGION: eu-west-1
+    LOG_TRACE_TABLE: logtrace-${self:provider.stage}
+   
+
+package:
+  patterns:
+  - '!./**' # 1. EXCLUDE EVERYTHING in the current directory
+
+  # 2. INCLUDE ALL SOURCE CODE AND CONFIG FILES
+  - handlers/** # Your Lambda handler files
+  - helper/** # Your utility/shared helper code
+  - lib/** # Your library code
+  - package.json # Required for dependency resolution
+  - package-lock.json # Highly recommended for predictable deployments
+  - .env # If your function needs to read this at runtime
+
+  # 3. INCLUDE ALL PRODUCTION DEPENDENCIES
+  - node_modules/** # All production dependencies
+
+  # 4. EXCLUSIONS (Cleanup)
+  - '!node_modules/aws-sdk/**' # Exclude AWS SDK (provided by Lambda runtime)
+  - '!node_modules/**/test/**' # Exclude test folders/files
+  - '!node_modules/**/tests/**'
+  - '!node_modules/**/docs/**'
+  - '!node_modules/**/examples/**'
+  - '!node_modules/**/*.md' # Exclude Markdown files
+  - '!node_modules/**/*.ts' # Exclude TypeScript source files
+  - '!node_modules/**/*.map' # Exclude source maps
+  excludeDevDependencies: true # Automatically excludes devDependencies listed in package.json
+
+functions:
+  ancillarySearch:
+    handler: handlers/ancillarySearch.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:eu-west-1:${aws:accountId}:layer:authorizerLayer:1
+    events:
+    - http:
+        path: /ancillarySearch
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true
+
+
+  bookAncillary:
+    handler: handlers/bookAncillary.handler
+    timeout: 30 # API Gateway limit
+    memorySize: 512
+    layers:
+    - arn:aws:lambda:eu-west-1:${aws:accountId}:layer:authorizerLayer:1
+    events:
+    - http:
+        path: /bookAncillary
+        method: post
+        cors:
+          origin: '*'
+          headers:
+          - Content-Type
+          - X-API-KEY
+          - user_type
+          - user_id
+          - Authorization
+          allowCredentials: true        
+resources:
+  Resources:
+
+    # Lambda Security Group
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for Lambda
+        VpcId: vpc-0462bd4dc795b34c6
+        SecurityGroupEgress:
+          - IpProtocol: -1
+            CidrIp: 0.0.0.0/0
+
+    # Redis Security Group - just allow Lambda SG access
+    RedisSecurityGroupIngress:
+      Type: AWS::EC2::SecurityGroupIngress
+      Properties:
+        IpProtocol: tcp
+        FromPort: 6379
+        ToPort: 6379
+        GroupId: sg-0af8cf19f6dca0862   # EXISTING Redis SG
+        SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+
+plugins:
+- serverless-ssm-fetch
