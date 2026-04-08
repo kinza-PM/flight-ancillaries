@@ -1,20 +1,18 @@
 import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
-import { globalHeaders, logTrace, getSessionId } from "../helper/helper.js";
-import redis from "../lib/redisClient.js"; // your redis instance
+import { globalHeaders, logTrace, getSessionId, createResponse, setRequestContext, logError } from "../helper/helper.js";
+import redis from "../lib/redisClient.js";
 import { createCacheKey } from "../lib/cacheKey.js";
 import { verifyToken } from "./authorizerLayer.js";
 
-export const handler = async (event) => {
+export const handler = async (event, context) => {
+    setRequestContext(event, context);
+    
     try {
         // --- Token Verification ---
         const authVerification = await verifyToken(event);
         if (authVerification?.principalId === "unknown") {
-            return {
-                ...globalHeaders(),
-                statusCode: 401,
-                body: JSON.stringify({ message: "Unauthorized: Invalid or expired token" }),
-            };
+            return createResponse(401, { message: "Unauthorized: Invalid or expired token" });
         }
 
         const body = typeof event.body === "string" ? JSON.parse(event.body) : event.body;
@@ -22,19 +20,11 @@ export const handler = async (event) => {
         // --- Session ID from Provesio ---
         const { sessionId, conversationId } = await getSessionId(authVerification?.context?.sub, searchKey);
         if (!sessionId) {
-            return {
-                ...globalHeaders(),
-                statusCode: 500,
-                body: JSON.stringify({ message: "Login failed, no sessionId returned." }),
-            };
+            return createResponse(500, { message: "Login failed, no sessionId returned." });
         }
 
         if (!conversationId) {
-            return {
-                ...globalHeaders(),
-                statusCode: 500,
-                body: JSON.stringify({ message: "Login failed, no conversationId returned." }),
-            };
+            return createResponse(500, { message: "Login failed, no conversationId returned." });
         }
         console.log("conversationId************",conversationId)
         console.log("sessionId***************",sessionId);
@@ -45,7 +35,7 @@ export const handler = async (event) => {
             const cached = await redis.get(cacheKey);
             if (cached) {
                 console.info("Cache HIT for", cacheKey);
-                return { statusCode: 200, ...globalHeaders(), body: cached };
+                return createResponse(200, JSON.parse(cached));
             }
             console.info("Cache MISS for", cacheKey);
         } catch (redisErr) {
@@ -87,17 +77,20 @@ export const handler = async (event) => {
         };
         await logTrace(payload);
 
-        return { statusCode: 200, ...globalHeaders(), body: JSON.stringify(searchResp.data) };
+        return createResponse(200, searchResp.data);
 
     } catch (error) {
         console.error("Error in ancillary search:", error.response?.data || error.message, error.stack);
-        return {
-            statusCode: 500,
-            headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Credentials": true },
-            body: JSON.stringify({
-                message: error.response?.data || "Internal Server Error",
-                error: error.response?.data || error.message,
-            }),
-        };
+        
+        await logError(error, {
+            function: 'ancillarySearch',
+            event: JSON.stringify(event)
+        });
+        
+        return createResponse(500, {
+            message: error.response?.data || "Internal Server Error",
+            error: error.response?.data || error.message,
+            stack: error.stack
+        });
     }
 };
