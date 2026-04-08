@@ -50,12 +50,13 @@ export const getSessionId = async (userId, searchKey = null) => {
     }
 
     const cacheKey = createCacheKey({ fetchsSessionId: "fetchsSessionId" }, "sessionIdxxxx");
+
     try {
       const cacheRaw = await redis.get(cacheKey);
       const cached = cacheRaw ? JSON.parse(cacheRaw) : null
 
       if (cached) {
-        console.log("cache condition is running*******");
+        console.log("cache condition is running abc*******");
 
         const conversationId = await getConversationIdFromRedis(userId, searchKey, null)
         console.log("cached conversationId**********", conversationId);
@@ -275,15 +276,20 @@ export const getConversationIdFromRedis = async (userId, searchKey, conversation
     const conversationIdKey = `conversationId:${userId}`
 
     if (conversationId) {
+      console.log("create conversation redis key condition******************");
+
       await redis.set(conversationIdKey, JSON.stringify(conversationId), "EX", 1500);
       return conversationIdKey
     } else {
+      console.log("in else condition *********");
 
       if (!conversationId && !searchKey) {
         console.log("in condition 2 null *************");
         const generateConversationId = uuidv4()
         const cacheRaw = await redis.get(conversationIdKey);
         const conversationIdData = JSON.parse(cacheRaw);
+        console.log("checker conversationIdData**********", conversationIdData);
+
         if (!conversationIdData) {
           console.log("conversationIdData condition********");
           await redis.set(conversationIdKey, JSON.stringify(generateConversationId), "EX", 1500);
@@ -301,10 +307,15 @@ export const getConversationIdFromRedis = async (userId, searchKey, conversation
           },
         })
       );
-
-      if (!Item) return null;
+      console.log("checker item**********", Item);
+      if (!Item) {
+        console.log("in mock condition ****************");
+        
+        return uuidv4();
+      }
 
       const item = unmarshall(Item);
+
 
       const redisKey =
         item.userType === "guest"
