@@ -40,7 +40,14 @@ provider:
         - Effect: Allow
           Action:
             - sqs:SendMessage
-          Resource: arn:aws:sqs:eu-west-1:${aws:accountId}:add-log-queue-${self:provider.stage}     
+          Resource: arn:aws:sqs:eu-west-1:${aws:accountId}:add-log-queue-${self:provider.stage}
+
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+          Resource:
+            - arn:aws:dynamodb:eu-west-1:${aws:accountId}:table/logtrace-${self:provider.stage}       
 
   environment:
     STAGE: ${self:provider.stage}

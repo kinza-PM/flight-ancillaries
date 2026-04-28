@@ -44,6 +44,13 @@ provider:
             - arn:aws:sqs:eu-west-1:${aws:accountId}:add-log-queue-${self:provider.stage}
             - arn:aws:sqs:eu-west-1:${aws:accountId}:error-log-queue-${self:provider.stage}     
 
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+          Resource:
+            - arn:aws:dynamodb:eu-west-1:${aws:accountId}:table/logtrace-${self:provider.stage}       
+
   environment:
     STAGE: ${self:provider.stage}
     USERNAME: ${self:custom.serverlessSsmFetch.USERNAME}

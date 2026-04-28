@@ -309,7 +309,7 @@ export const getConversationIdFromRedis = async (userId, searchKey, conversation
       );
       console.log("checker item**********", Item);
       if (!Item) {
-        console.log("in mock condition ****************");
+        console.log("in mock condition *************************");
         
         return uuidv4();
       }
